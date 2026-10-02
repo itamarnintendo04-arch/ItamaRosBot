@@ -124,6 +124,12 @@ async function registerCommands() {
     version: "10"
   }).setToken(TOKEN);
 
+  /*
+   * Register the exact four commands
+   * for the test server.
+   *
+   * This replaces old guild commands.
+   */
   await rest.put(
     Routes.applicationGuildCommands(
       CLIENT_ID,
@@ -134,7 +140,29 @@ async function registerCommands() {
     }
   );
 
-  console.log("Slash commands registered successfully.");
+  /*
+   * Replace old GLOBAL commands too.
+   *
+   * This removes old commands such as:
+   * /giveaway random
+   * /giveaway fast
+   */
+  await rest.put(
+    Routes.applicationCommands(
+      CLIENT_ID
+    ),
+    {
+      body: commands
+    }
+  );
+
+  console.log(
+    "Slash commands registered successfully:"
+  );
+
+  console.log(
+    commands.map(command => command.name).join(", ")
+  );
 }
 
 /* =========================
@@ -504,11 +532,6 @@ async function claimDrop(
 ) {
   const collection = getCollection();
 
-  /*
-   * Atomic operation:
-   * only the first click can change
-   * finished:false to finished:true.
-   */
   const drop =
     await collection.findOneAndUpdate(
       {
@@ -691,11 +714,6 @@ async function createDrop(interaction) {
       "prize"
     );
 
-  /*
-   * NO TIMER.
-   * Drop stays active until someone clicks
-   * or an admin uses /force-end.
-   */
   const message =
     await interaction.reply({
       embeds: [
@@ -825,9 +843,6 @@ async function forceEnd(
     return;
   }
 
-  /*
-   * FORCE END GIVEAWAY
-   */
   if (item.type === "giveaway") {
     const ended =
       await finishGiveaway(
@@ -844,10 +859,6 @@ async function forceEnd(
     return;
   }
 
-  /*
-   * FORCE END DROP
-   * Nobody wins because nobody claimed it.
-   */
   const update =
     await collection.updateOne(
       {
@@ -966,10 +977,6 @@ client.on(
   "interactionCreate",
   async interaction => {
     try {
-      /* =====================
-         SLASH COMMANDS
-      ===================== */
-
       if (
         interaction.isChatInputCommand()
       ) {
@@ -985,10 +992,6 @@ client.on(
           return;
         }
 
-        /*
-         * Giveaway, Drop and Force End
-         * require Manage Server.
-         */
         if (
           interaction.commandName ===
             "giveaway" ||
@@ -1047,10 +1050,6 @@ client.on(
         }
       }
 
-      /* =====================
-         GIVEAWAY ENTRY
-      ===================== */
-
       if (
         interaction.isButton() &&
         interaction.customId ===
@@ -1059,9 +1058,6 @@ client.on(
         const collection =
           getCollection();
 
-        /*
-         * Check if this user already entered.
-         */
         const alreadyEntered =
           await collection.findOne({
             messageId:
@@ -1082,9 +1078,6 @@ client.on(
           return;
         }
 
-        /*
-         * Atomically add the user.
-         */
         const giveaway =
           await collection.findOneAndUpdate(
             {
@@ -1121,9 +1114,6 @@ client.on(
         const count =
           giveaway.entries.length;
 
-        /*
-         * Update the ORIGINAL giveaway message.
-         */
         await interaction.message.edit({
           embeds: [
             giveawayEmbed({
@@ -1152,10 +1142,6 @@ client.on(
 
         return;
       }
-
-      /* =====================
-         DROP CLAIM
-      ===================== */
 
       if (
         interaction.isButton() &&
@@ -1186,10 +1172,6 @@ client.on(
 
         return;
       }
-
-      /* =====================
-         FORCE END SELECT
-      ===================== */
 
       if (
         interaction.isStringSelectMenu() &&
