@@ -23,6 +23,8 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
+const MAX_TIMEOUT = 2147483647;
+
 // =========================
 // HTTP SERVER
 // =========================
@@ -52,7 +54,15 @@ const client = new Client({
 });
 
 // =========================
-// SLASH COMMANDS
+// DATABASE
+// =========================
+
+function getGiveawaysCollection() {
+  return getDatabase().collection("giveaways");
+}
+
+// =========================
+// COMMANDS
 // =========================
 
 const giveawayCommand = new SlashCommandBuilder()
@@ -110,60 +120,45 @@ const commands = [
 
 async function registerCommands() {
   if (!TOKEN || !CLIENT_ID) {
-    console.error(
-      "Missing DISCORD_TOKEN or CLIENT_ID environment variable."
+    throw new Error(
+      "DISCORD_TOKEN or CLIENT_ID is missing."
     );
-
-    return;
   }
 
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  const rest = new REST({
+    version: "10"
+  }).setToken(TOKEN);
 
-  try {
-    if (GUILD_ID) {
-      await rest.put(
-        Routes.applicationGuildCommands(
-          CLIENT_ID,
-          GUILD_ID
-        ),
-        {
-          body: commands
-        }
-      );
+  if (GUILD_ID) {
+    await rest.put(
+      Routes.applicationGuildCommands(
+        CLIENT_ID,
+        GUILD_ID
+      ),
+      {
+        body: commands
+      }
+    );
 
-      console.log(
-        "Slash commands registered in the test server."
-      );
-    } else {
-      await rest.put(
-        Routes.applicationCommands(CLIENT_ID),
-        {
-          body: commands
-        }
-      );
+    console.log(
+      "Slash commands registered in the test server."
+    );
+  } else {
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      {
+        body: commands
+      }
+    );
 
-      console.log(
-        "Global slash commands registered."
-      );
-    }
-  } catch (error) {
-    console.error(
-      "Failed to register slash commands:",
-      error
+    console.log(
+      "Global slash commands registered."
     );
   }
 }
 
 // =========================
-// DATABASE
-// =========================
-
-function getGiveawaysCollection() {
-  return getDatabase().collection("giveaways");
-}
-
-// =========================
-// DURATION PARSER
+// DURATION
 // =========================
 
 function parseDuration(value) {
@@ -183,6 +178,10 @@ function parseDuration(value) {
   const amount = Number(match[1]);
   const unit = match[2];
 
+  if (!Number.isSafeInteger(amount)) {
+    return null;
+  }
+
   const multipliers = {
     M: 60 * 1000,
     H: 60 * 60 * 1000,
@@ -190,7 +189,13 @@ function parseDuration(value) {
     W: 7 * 24 * 60 * 60 * 1000
   };
 
-  return amount * multipliers[unit];
+  const duration = amount * multipliers[unit];
+
+  if (!Number.isSafeInteger(duration)) {
+    return null;
+  }
+
+  return duration;
 }
 
 // =========================
@@ -215,7 +220,7 @@ function createDropButton() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("drop_claim")
-      .setLabel("0")
+      .setLabel("CLAIM")
       .setEmoji("🎉")
       .setStyle(ButtonStyle.Success)
   );
@@ -252,27 +257,52 @@ function createFinishedDropButton() {
 }
 
 // =========================
-// PICK WINNERS
+// RANDOM WINNERS
 // =========================
 
-function pickWinners(entries, amount) {
+function pickWinners(entries, winnerCount) {
   const shuffled = [...entries];
 
-  for (let i = shuffled.length - 1; i > 0; i--) {
+  for (
+    let index = shuffled.length - 1;
+    index > 0;
+    index--
+  ) {
     const randomIndex = Math.floor(
-      Math.random() * (i + 1)
+      Math.random() * (index + 1)
     );
 
-    [shuffled[i], shuffled[randomIndex]] = [
+    [
+      shuffled[index],
+      shuffled[randomIndex]
+    ] = [
       shuffled[randomIndex],
-      shuffled[i]
+      shuffled[index]
     ];
   }
 
   return shuffled.slice(
     0,
-    Math.min(amount, shuffled.length)
+    Math.min(winnerCount, shuffled.length)
   );
+}
+
+// =========================
+// FETCH MESSAGE
+// =========================
+
+async function fetchGiveawayMessage(data) {
+  const channel = await client.channels
+    .fetch(data.channelId)
+    .catch(() => null);
+
+  if (!channel || !channel.isTextBased()) {
+    return null;
+  }
+
+  return channel.messages
+    .fetch(data.messageId)
+    .catch(() => null);
 }
 
 // =========================
@@ -289,49 +319,46 @@ async function finishGiveaway(messageId) {
   });
 
   if (!giveaway) {
-    return;
+    return false;
   }
 
-  const entries = giveaway.entries || [];
+  const entries = Array.isArray(giveaway.entries)
+    ? giveaway.entries
+    : [];
 
   const winners = pickWinners(
     entries,
     giveaway.winners
   );
 
-  const updateResult = await collection.updateOne(
-    {
-      messageId,
-      type: "giveaway",
-      finished: false
-    },
-    {
-      $set: {
-        finished: true,
-        winnerIds: winners,
-        endedAt: new Date()
+  const updateResult =
+    await collection.updateOne(
+      {
+        _id: giveaway._id,
+        finished: false
+      },
+      {
+        $set: {
+          finished: true,
+          winnerIds: winners,
+          endedAt: new Date()
+        }
       }
-    }
-  );
+    );
 
   if (updateResult.modifiedCount !== 1) {
-    return;
+    return false;
   }
 
-  const channel = await client.channels
-    .fetch(giveaway.channelId)
-    .catch(() => null);
-
-  if (!channel) {
-    return;
-  }
-
-  const message = await channel.messages
-    .fetch(messageId)
-    .catch(() => null);
+  const message =
+    await fetchGiveawayMessage(giveaway);
 
   if (!message) {
-    return;
+    console.error(
+      `Could not find giveaway message ${messageId}.`
+    );
+
+    return false;
   }
 
   const endedEmbed = new EmbedBuilder()
@@ -357,9 +384,10 @@ async function finishGiveaway(messageId) {
       .join(", ");
 
     endedEmbed.addFields({
-      name: winners.length === 1
-        ? "Winner"
-        : "Winners",
+      name:
+        winners.length === 1
+          ? "Winner"
+          : "Winners",
       value: winnerMentions
     });
   }
@@ -372,29 +400,43 @@ async function finishGiveaway(messageId) {
       )
     ]
   });
+
+  console.log(
+    `Giveaway ${messageId} ended. Winners: ${winners.join(", ") || "none"}`
+  );
+
+  return true;
 }
 
 // =========================
 // FINISH DROP
 // =========================
 
-async function finishDrop(messageId, winnerId) {
+async function claimDrop(messageId, winnerId) {
   const collection = getGiveawaysCollection();
 
-  const updateResult = await collection.updateOne(
-    {
-      messageId,
-      type: "drop",
-      finished: false
-    },
-    {
-      $set: {
-        finished: true,
-        winnerId,
-        endedAt: new Date()
+  /*
+   * IMPORTANT:
+   * The finished:false condition makes this atomic.
+   * If two people click at almost exactly the same time,
+   * MongoDB allows only one update to succeed.
+   */
+
+  const updateResult =
+    await collection.updateOne(
+      {
+        messageId,
+        type: "drop",
+        finished: false
+      },
+      {
+        $set: {
+          finished: true,
+          winnerId,
+          endedAt: new Date()
+        }
       }
-    }
-  );
+    );
 
   if (updateResult.modifiedCount !== 1) {
     return false;
@@ -409,31 +451,28 @@ async function finishDrop(messageId, winnerId) {
     return false;
   }
 
-  const channel = await client.channels
-    .fetch(drop.channelId)
-    .catch(() => null);
-
-  if (!channel) {
-    return false;
-  }
-
-  const message = await channel.messages
-    .fetch(messageId)
-    .catch(() => null);
+  const message =
+    await fetchGiveawayMessage(drop);
 
   if (!message) {
+    console.error(
+      `Could not find drop message ${messageId}.`
+    );
+
     return false;
   }
+
+  const endedDescription =
+    drop.prize
+      ? `**Prize:** ${drop.prize}\n\n` +
+        `**Hosted by:** <@${drop.hostId}>\n\n` +
+        `**Winner:** <@${winnerId}>`
+      : `**Hosted by:** <@${drop.hostId}>\n\n` +
+        `**Winner:** <@${winnerId}>`;
 
   const endedEmbed = new EmbedBuilder()
     .setTitle("🎉 DROP ENDED!")
-    .setDescription(
-      `${drop.prize
-        ? `**Prize:** ${drop.prize}\n\n`
-        : ""}` +
-      `**Hosted by:** <@${drop.hostId}>\n\n` +
-      `**Winner:** <@${winnerId}>`
-    )
+    .setDescription(endedDescription)
     .setFooter({
       text: "ItamaRos Bot"
     })
@@ -446,7 +485,43 @@ async function finishDrop(messageId, winnerId) {
     ]
   });
 
+  console.log(
+    `Drop ${messageId} was claimed by ${winnerId}.`
+  );
+
   return true;
+}
+
+// =========================
+// GIVEAWAY TIMER
+// =========================
+
+function scheduleGiveaway(giveaway) {
+  const remaining =
+    giveaway.endTime - Date.now();
+
+  if (remaining <= 0) {
+    finishGiveaway(
+      giveaway.messageId
+    ).catch(console.error);
+
+    return;
+  }
+
+  /*
+   * setTimeout has a maximum safe delay.
+   * This allows even longer durations to work
+   * without overflowing JavaScript's timer.
+   */
+
+  const delay = Math.min(
+    remaining,
+    MAX_TIMEOUT
+  );
+
+  setTimeout(() => {
+    scheduleGiveaway(giveaway);
+  }, delay);
 }
 
 // =========================
@@ -457,9 +532,10 @@ async function createGiveaway(
   interaction,
   prize,
   durationText,
-  winners
+  winnerCount
 ) {
-  const duration = parseDuration(durationText);
+  const duration =
+    parseDuration(durationText);
 
   if (!duration) {
     await interaction.reply({
@@ -471,64 +547,78 @@ async function createGiveaway(
     return;
   }
 
-  const endTime = Date.now() + duration;
+  const endTime =
+    Date.now() + duration;
 
   const embed = new EmbedBuilder()
     .setTitle("🎉 GIVEAWAY!")
     .setDescription(
       `**Prize:** ${prize}\n\n` +
       `**Hosted by:** ${interaction.user}\n\n` +
-      `**Winners:** ${winners}\n\n` +
+      `**Winners:** ${winnerCount}\n\n` +
       `Click the button below to enter!`
     )
     .addFields({
       name: "Ends",
-      value: `<t:${Math.floor(endTime / 1000)}:R>`
+      value:
+        `<t:${Math.floor(
+          endTime / 1000
+        )}:R>`
     })
     .setFooter({
       text: "ItamaRos Bot"
     })
     .setTimestamp();
 
-  const message = await interaction.channel.send({
-    embeds: [embed],
-    components: [
-      createGiveawayButton(0)
-    ]
-  });
+  const message =
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [
+        createGiveawayButton(0)
+      ]
+    });
 
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
-  await collection.insertOne({
+  const giveaway = {
     messageId: message.id,
     channelId: interaction.channel.id,
     guildId: interaction.guild.id,
     type: "giveaway",
     prize,
-    winners,
+    winners: winnerCount,
     hostId: interaction.user.id,
     entries: [],
     winnerIds: [],
     endTime,
     finished: false,
     createdAt: new Date()
-  });
+  };
 
-  setTimeout(() => {
-    finishGiveaway(message.id).catch(console.error);
-  }, duration);
+  await collection.insertOne(giveaway);
+
+  scheduleGiveaway(giveaway);
 
   await interaction.reply({
-    content: "Giveaway created successfully!",
+    content:
+      "Giveaway created successfully!",
     ephemeral: true
   });
+
+  console.log(
+    `Giveaway created: ${message.id}`
+  );
 }
 
 // =========================
 // CREATE DROP
 // =========================
 
-async function createDrop(interaction, prize) {
+async function createDrop(
+  interaction,
+  prize
+) {
   const embed = new EmbedBuilder()
     .setTitle("🎁 DROP!")
     .setDescription(
@@ -543,14 +633,16 @@ async function createDrop(interaction, prize) {
     })
     .setTimestamp();
 
-  const message = await interaction.channel.send({
-    embeds: [embed],
-    components: [
-      createDropButton()
-    ]
-  });
+  const message =
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [
+        createDropButton()
+      ]
+    });
 
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
   await collection.insertOne({
     messageId: message.id,
@@ -565,42 +657,34 @@ async function createDrop(interaction, prize) {
   });
 
   await interaction.reply({
-    content: "Drop created successfully!",
+    content:
+      "Drop created successfully!",
     ephemeral: true
   });
+
+  console.log(
+    `Drop created: ${message.id}`
+  );
 }
 
 // =========================
-// RESTORE ACTIVE GIVEAWAYS
+// RESTORE GIVEAWAYS
 // =========================
 
 async function restoreActiveGiveaways() {
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
-  const activeGiveaways = await collection
-    .find({
-      type: "giveaway",
-      finished: false
-    })
-    .toArray();
+  const activeGiveaways =
+    await collection
+      .find({
+        type: "giveaway",
+        finished: false
+      })
+      .toArray();
 
   for (const giveaway of activeGiveaways) {
-    const remainingTime =
-      giveaway.endTime - Date.now();
-
-    if (remainingTime <= 0) {
-      await finishGiveaway(
-        giveaway.messageId
-      );
-
-      continue;
-    }
-
-    setTimeout(() => {
-      finishGiveaway(
-        giveaway.messageId
-      ).catch(console.error);
-    }, remainingTime);
+    scheduleGiveaway(giveaway);
   }
 
   console.log(
@@ -609,31 +693,34 @@ async function restoreActiveGiveaways() {
 }
 
 // =========================
-// BOT READY
+// READY
 // =========================
 
-client.once("clientReady", async () => {
-  console.log(
-    `ItamaRos Bot is online as ${client.user.tag}`
-  );
-
-  try {
-    await connectDatabase();
-
-    await registerCommands();
-
-    await restoreActiveGiveaways();
-
+client.once(
+  "clientReady",
+  async () => {
     console.log(
-      "ItamaRos Bot startup completed successfully."
+      `ItamaRos Bot is online as ${client.user.tag}`
     );
-  } catch (error) {
-    console.error(
-      "Startup error:",
-      error
-    );
+
+    try {
+      await connectDatabase();
+
+      await registerCommands();
+
+      await restoreActiveGiveaways();
+
+      console.log(
+        "ItamaRos Bot startup completed successfully."
+      );
+    } catch (error) {
+      console.error(
+        "Startup error:",
+        error
+      );
+    }
   }
-});
+);
 
 // =========================
 // INTERACTIONS
@@ -653,7 +740,10 @@ client.on(
         // PING
         // =========================
 
-        if (interaction.commandName === "ping") {
+        if (
+          interaction.commandName ===
+          "ping"
+        ) {
           await interaction.reply({
             content:
               `Pong! 🏓\nLatency: ${client.ws.ping}ms`
@@ -663,24 +753,57 @@ client.on(
         }
 
         // =========================
+        // ADMIN CHECK
+        // =========================
+
+        if (
+          interaction.commandName === "giveaway" ||
+          interaction.commandName === "drop"
+        ) {
+          const hasPermission =
+            interaction.memberPermissions?.has(
+              PermissionFlagsBits.ManageGuild
+            );
+
+          if (!hasPermission) {
+            await interaction.reply({
+              content:
+                "You do not have permission to use this command.",
+              ephemeral: true
+            });
+
+            return;
+          }
+        }
+
+        // =========================
         // GIVEAWAY
         // =========================
 
-        if (interaction.commandName === "giveaway") {
+        if (
+          interaction.commandName ===
+          "giveaway"
+        ) {
           const prize =
-            interaction.options.getString("prize");
+            interaction.options.getString(
+              "prize"
+            );
 
           const duration =
-            interaction.options.getString("duration");
+            interaction.options.getString(
+              "duration"
+            );
 
-          const winners =
-            interaction.options.getInteger("winners");
+          const winnerCount =
+            interaction.options.getInteger(
+              "winners"
+            );
 
           await createGiveaway(
             interaction,
             prize,
             duration,
-            winners
+            winnerCount
           );
 
           return;
@@ -690,9 +813,14 @@ client.on(
         // DROP
         // =========================
 
-        if (interaction.commandName === "drop") {
+        if (
+          interaction.commandName ===
+          "drop"
+        ) {
           const prize =
-            interaction.options.getString("prize");
+            interaction.options.getString(
+              "prize"
+            );
 
           await createDrop(
             interaction,
@@ -713,23 +841,36 @@ client.on(
         // GIVEAWAY ENTER
         // =========================
 
-        if (interaction.customId === "giveaway_enter") {
+        if (
+          interaction.customId ===
+          "giveaway_enter"
+        ) {
           const collection =
             getGiveawaysCollection();
 
-          const updateResult =
+          /*
+           * Atomic update:
+           * - Giveaway must still be active.
+           * - User must not already be in entries.
+           * - MongoDB adds the user only once.
+           */
+
+          const result =
             await collection.findOneAndUpdate(
               {
-                messageId: interaction.message.id,
+                messageId:
+                  interaction.message.id,
                 type: "giveaway",
                 finished: false,
                 entries: {
-                  $ne: interaction.user.id
+                  $ne:
+                    interaction.user.id
                 }
               },
               {
                 $addToSet: {
-                  entries: interaction.user.id
+                  entries:
+                    interaction.user.id
                 }
               },
               {
@@ -737,20 +878,18 @@ client.on(
               }
             );
 
-          const updatedGiveaway =
-            updateResult;
-
-          if (!updatedGiveaway) {
+          if (!result) {
             const giveaway =
               await collection.findOne({
-                messageId: interaction.message.id,
+                messageId:
+                  interaction.message.id,
                 type: "giveaway"
               });
 
             if (!giveaway) {
               await interaction.reply({
                 content:
-                  "This giveaway could not be found.",
+                  "This giveaway no longer exists.",
                 ephemeral: true
               });
 
@@ -776,6 +915,9 @@ client.on(
             return;
           }
 
+          const updatedGiveaway =
+            result;
+
           const updatedEmbed =
             EmbedBuilder.from(
               interaction.message.embeds[0]
@@ -789,7 +931,9 @@ client.on(
           );
 
           await interaction.message.edit({
-            embeds: [updatedEmbed],
+            embeds: [
+              updatedEmbed
+            ],
             components: [
               createGiveawayButton(
                 updatedGiveaway.entries.length
@@ -810,13 +954,17 @@ client.on(
         // DROP CLAIM
         // =========================
 
-        if (interaction.customId === "drop_claim") {
-          const claimed = await finishDrop(
-            interaction.message.id,
-            interaction.user.id
-          );
+        if (
+          interaction.customId ===
+          "drop_claim"
+        ) {
+          const won =
+            await claimDrop(
+              interaction.message.id,
+              interaction.user.id
+            );
 
-          if (!claimed) {
+          if (!won) {
             await interaction.reply({
               content:
                 "This drop has already been claimed.",
