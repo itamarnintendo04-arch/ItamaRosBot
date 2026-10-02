@@ -83,7 +83,7 @@ const giveawayCommand = new SlashCommandBuilder()
 
 const dropCommand = new SlashCommandBuilder()
   .setName("drop")
-  .setDescription("Create a drop that ends when someone clicks")
+  .setDescription("Create a drop")
   .setDefaultMemberPermissions(
     PermissionFlagsBits.ManageGuild.toString()
   )
@@ -91,7 +91,7 @@ const dropCommand = new SlashCommandBuilder()
     option
       .setName("prize")
       .setDescription("What is the prize?")
-      .setRequired(true)
+      .setRequired(false)
   );
 
 const pingCommand = new SlashCommandBuilder()
@@ -222,6 +222,36 @@ function createDropButton() {
 }
 
 // =========================
+// FINISHED GIVEAWAY BUTTON
+// =========================
+
+function createFinishedGiveawayButton(count) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("giveaway_finished")
+      .setLabel(String(count))
+      .setEmoji("🎉")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true)
+  );
+}
+
+// =========================
+// FINISHED DROP BUTTON
+// =========================
+
+function createFinishedDropButton() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("drop_finished")
+      .setLabel("CLAIMED")
+      .setEmoji("🎉")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true)
+  );
+}
+
+// =========================
 // PICK WINNERS
 // =========================
 
@@ -253,25 +283,39 @@ async function finishGiveaway(messageId) {
   const collection = getGiveawaysCollection();
 
   const giveaway = await collection.findOne({
-    messageId
+    messageId,
+    type: "giveaway",
+    finished: false
   });
 
-  if (!giveaway || giveaway.type !== "giveaway") {
+  if (!giveaway) {
     return;
   }
 
-  if (giveaway.finished) {
-    return;
-  }
+  const entries = giveaway.entries || [];
 
-  await collection.updateOne(
-    { messageId },
+  const winners = pickWinners(
+    entries,
+    giveaway.winners
+  );
+
+  const updateResult = await collection.updateOne(
+    {
+      messageId,
+      type: "giveaway",
+      finished: false
+    },
     {
       $set: {
-        finished: true
+        finished: true,
+        winnerIds: winners
       }
     }
   );
+
+  if (updateResult.modifiedCount !== 1) {
+    return;
+  }
 
   const channel = await client.channels
     .fetch(giveaway.channelId)
@@ -289,15 +333,8 @@ async function finishGiveaway(messageId) {
     return;
   }
 
-  const entries = giveaway.entries || [];
-
-  const winners = pickWinners(
-    entries,
-    giveaway.winners
-  );
-
   const endedEmbed = new EmbedBuilder()
-    .setTitle("🎉 Giveaway Ended!")
+    .setTitle("🎉 GIVEAWAY ENDED!")
     .setDescription(
       `**Prize:** ${giveaway.prize}\n\n` +
       `**Hosted by:** <@${giveaway.hostId}>\n\n` +
@@ -310,7 +347,7 @@ async function finishGiveaway(messageId) {
 
   if (winners.length === 0) {
     endedEmbed.addFields({
-      name: "Winners",
+      name: "Winner",
       value: "No one entered the giveaway."
     });
   } else {
@@ -319,54 +356,32 @@ async function finishGiveaway(messageId) {
       .join(", ");
 
     endedEmbed.addFields({
-      name: "Winners",
+      name: winners.length === 1
+        ? "Winner"
+        : "Winners",
       value: winnerMentions
     });
   }
 
-  const endedButton = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("giveaway_finished")
-      .setLabel(String(entries.length))
-      .setEmoji("🎉")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(true)
-  );
-
   await message.edit({
     embeds: [endedEmbed],
-    components: [endedButton]
+    components: [
+      createFinishedGiveawayButton(
+        entries.length
+      )
+    ]
   });
-
-  if (winners.length > 0) {
-    await channel.send(
-      `🎉 Congratulations ${winners
-        .map(userId => `<@${userId}>`)
-        .join(", ")}! You won **${giveaway.prize}**!`
-    );
-  } else {
-    await channel.send(
-      `The giveaway for **${giveaway.prize}** ended with no entries.`
-    );
-  }
 }
 
 // =========================
 // FINISH DROP
 // =========================
 
-async function finishDrop(messageId, winnerId) {
+async function finishDrop(
+  messageId,
+  winnerId
+) {
   const collection = getGiveawaysCollection();
-
-  const drop = await collection.findOne({
-    messageId,
-    type: "drop",
-    finished: false
-  });
-
-  if (!drop) {
-    return false;
-  }
 
   const updateResult = await collection.updateOne(
     {
@@ -383,6 +398,14 @@ async function finishDrop(messageId, winnerId) {
   );
 
   if (updateResult.modifiedCount !== 1) {
+    return false;
+  }
+
+  const drop = await collection.findOne({
+    messageId
+  });
+
+  if (!drop) {
     return false;
   }
 
@@ -403,9 +426,11 @@ async function finishDrop(messageId, winnerId) {
   }
 
   const endedEmbed = new EmbedBuilder()
-    .setTitle("🎉 Drop Claimed!")
+    .setTitle("🎉 DROP ENDED!")
     .setDescription(
-      `**Prize:** ${drop.prize}\n\n` +
+      `${drop.prize
+        ? `**Prize:** ${drop.prize}\n\n`
+        : ""}` +
       `**Hosted by:** <@${drop.hostId}>\n\n` +
       `**Winner:** <@${winnerId}>`
     )
@@ -414,23 +439,12 @@ async function finishDrop(messageId, winnerId) {
     })
     .setTimestamp();
 
-  const endedButton = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("drop_finished")
-      .setLabel("CLAIMED")
-      .setEmoji("🎉")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(true)
-  );
-
   await message.edit({
     embeds: [endedEmbed],
-    components: [endedButton]
+    components: [
+      createFinishedDropButton()
+    ]
   });
-
-  await channel.send(
-    `🎉 Congratulations <@${winnerId}>! You won **${drop.prize}**!`
-  );
 
   return true;
 }
@@ -445,22 +459,25 @@ async function createGiveaway(
   durationText,
   winners
 ) {
-  const duration = parseDuration(durationText);
+  const duration = parseDuration(
+    durationText
+  );
 
   if (!duration) {
     await interaction.reply({
       content:
-        "Invalid duration. Use a format such as `1M`, `5M`, `1H`, `1D` or `1W`.",
+        "Invalid duration. Use `1M`, `1H`, `1D` or `1W`.",
       ephemeral: true
     });
 
     return;
   }
 
-  const endTime = Date.now() + duration;
+  const endTime =
+    Date.now() + duration;
 
   const embed = new EmbedBuilder()
-    .setTitle("🎉 Giveaway!")
+    .setTitle("🎉 GIVEAWAY!")
     .setDescription(
       `**Prize:** ${prize}\n\n` +
       `**Hosted by:** ${interaction.user}\n\n` +
@@ -469,42 +486,54 @@ async function createGiveaway(
     )
     .addFields({
       name: "Ends",
-      value: `<t:${Math.floor(endTime / 1000)}:R>`
+      value:
+        `<t:${Math.floor(
+          endTime / 1000
+        )}:R>`
     })
     .setFooter({
       text: "ItamaRos Bot"
     })
     .setTimestamp();
 
-  const row = createGiveawayButton(0);
+  const message =
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [
+        createGiveawayButton(0)
+      ]
+    });
 
-  const message = await interaction.channel.send({
-    embeds: [embed],
-    components: [row]
-  });
-
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
   await collection.insertOne({
     messageId: message.id,
-    channelId: interaction.channel.id,
-    guildId: interaction.guild.id,
+    channelId:
+      interaction.channel.id,
+    guildId:
+      interaction.guild.id,
     type: "giveaway",
     prize,
     winners,
-    hostId: interaction.user.id,
+    hostId:
+      interaction.user.id,
     entries: [],
+    winnerIds: [],
     endTime,
     finished: false,
     createdAt: new Date()
   });
 
   setTimeout(() => {
-    finishGiveaway(message.id).catch(console.error);
+    finishGiveaway(
+      message.id
+    ).catch(console.error);
   }, duration);
 
   await interaction.reply({
-    content: "Giveaway created successfully!",
+    content:
+      "Giveaway created successfully!",
     ephemeral: true
   });
 }
@@ -520,7 +549,9 @@ async function createDrop(
   const embed = new EmbedBuilder()
     .setTitle("🎁 DROP!")
     .setDescription(
-      `**Prize:** ${prize}\n\n` +
+      `${prize
+        ? `**Prize:** ${prize}\n\n`
+        : ""}` +
       `**Hosted by:** ${interaction.user}\n\n` +
       `Be the first person to click the button!`
     )
@@ -529,30 +560,36 @@ async function createDrop(
     })
     .setTimestamp();
 
-  const row = createDropButton();
+  const message =
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [
+        createDropButton()
+      ]
+    });
 
-  const message = await interaction.channel.send({
-    embeds: [embed],
-    components: [row]
-  });
-
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
   await collection.insertOne({
     messageId: message.id,
-    channelId: interaction.channel.id,
-    guildId: interaction.guild.id,
+    channelId:
+      interaction.channel.id,
+    guildId:
+      interaction.guild.id,
     type: "drop",
-    prize,
-    winners: 1,
-    hostId: interaction.user.id,
+    prize: prize || null,
+    hostId:
+      interaction.user.id,
     entries: [],
     finished: false,
+    winnerId: null,
     createdAt: new Date()
   });
 
   await interaction.reply({
-    content: "Drop created successfully!",
+    content:
+      "Drop created successfully!",
     ephemeral: true
   });
 }
@@ -562,21 +599,27 @@ async function createDrop(
 // =========================
 
 async function restoreActiveGiveaways() {
-  const collection = getGiveawaysCollection();
+  const collection =
+    getGiveawaysCollection();
 
-  const activeGiveaways = await collection
-    .find({
-      type: "giveaway",
-      finished: false
-    })
-    .toArray();
+  const activeGiveaways =
+    await collection
+      .find({
+        type: "giveaway",
+        finished: false
+      })
+      .toArray();
 
   for (const giveaway of activeGiveaways) {
     const remainingTime =
-      giveaway.endTime - Date.now();
+      giveaway.endTime -
+      Date.now();
 
     if (remainingTime <= 0) {
-      await finishGiveaway(giveaway.messageId);
+      await finishGiveaway(
+        giveaway.messageId
+      );
+
       continue;
     }
 
@@ -596,28 +639,31 @@ async function restoreActiveGiveaways() {
 // BOT READY
 // =========================
 
-client.once("clientReady", async () => {
-  console.log(
-    `ItamaRos Bot is online as ${client.user.tag}`
-  );
-
-  try {
-    await connectDatabase();
-
-    await registerCommands();
-
-    await restoreActiveGiveaways();
-
+client.once(
+  "clientReady",
+  async () => {
     console.log(
-      "ItamaRos Bot startup completed successfully."
+      `ItamaRos Bot is online as ${client.user.tag}`
     );
-  } catch (error) {
-    console.error(
-      "Startup error:",
-      error
-    );
+
+    try {
+      await connectDatabase();
+
+      await registerCommands();
+
+      await restoreActiveGiveaways();
+
+      console.log(
+        "ItamaRos Bot startup completed successfully."
+      );
+    } catch (error) {
+      console.error(
+        "Startup error:",
+        error
+      );
+    }
   }
-});
+);
 
 // =========================
 // INTERACTIONS
@@ -631,8 +677,17 @@ client.on(
       // SLASH COMMANDS
       // =========================
 
-      if (interaction.isChatInputCommand()) {
-        if (interaction.commandName === "ping") {
+      if (
+        interaction.isChatInputCommand()
+      ) {
+        // =========================
+        // PING
+        // =========================
+
+        if (
+          interaction.commandName ===
+          "ping"
+        ) {
           await interaction.reply({
             content:
               `Pong! 🏓\nLatency: ${client.ws.ping}ms`
@@ -640,6 +695,10 @@ client.on(
 
           return;
         }
+
+        // =========================
+        // GIVEAWAY
+        // =========================
 
         if (
           interaction.commandName ===
@@ -669,6 +728,10 @@ client.on(
 
           return;
         }
+
+        // =========================
+        // DROP
+        // =========================
 
         if (
           interaction.commandName ===
@@ -740,19 +803,38 @@ client.on(
             return;
           }
 
-          await collection.updateOne(
-            {
-              messageId:
-                interaction.message.id,
-              finished: false
-            },
-            {
-              $addToSet: {
-                entries:
-                  interaction.user.id
+          const updateResult =
+            await collection.updateOne(
+              {
+                messageId:
+                  interaction.message.id,
+                type: "giveaway",
+                finished: false,
+                entries: {
+                  $ne:
+                    interaction.user.id
+                }
+              },
+              {
+                $addToSet: {
+                  entries:
+                    interaction.user.id
+                }
               }
-            }
-          );
+            );
+
+          if (
+            updateResult.modifiedCount !==
+            1
+          ) {
+            await interaction.reply({
+              content:
+                "You are already entered in this giveaway!",
+              ephemeral: true
+            });
+
+            return;
+          }
 
           const updatedGiveaway =
             await collection.findOne({
@@ -773,10 +855,13 @@ client.on(
           );
 
           await interaction.message.edit({
-            embeds: [updatedEmbed],
+            embeds: [
+              updatedEmbed
+            ],
             components: [
               createGiveawayButton(
-                updatedGiveaway.entries.length
+                updatedGiveaway.entries
+                  .length
               )
             ]
           });
