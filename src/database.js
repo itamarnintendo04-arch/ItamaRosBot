@@ -6,22 +6,38 @@ if (!MONGODB_URI) {
   throw new Error("MONGODB_URI is missing.");
 }
 
-const client = new MongoClient(MONGODB_URI);
+const client = new MongoClient(MONGODB_URI, {
+  tls: true,
+  serverSelectionTimeoutMS: 15000,
+  connectTimeoutMS: 15000,
+  socketTimeoutMS: 15000
+});
 
-let database;
+let database = null;
 
 async function connectDatabase() {
   if (database) {
     return database;
   }
 
-  await client.connect();
+  try {
+    await client.connect();
 
-  database = client.db("itamaros_bot");
+    await client.db("admin").command({
+      ping: 1
+    });
 
-  console.log("MongoDB connected successfully.");
+    database = client.db("itamaros_bot");
 
-  return database;
+    console.log("MongoDB connected successfully.");
+
+    return database;
+  } catch (error) {
+    console.error("MongoDB connection failed:");
+    console.error(error);
+
+    throw error;
+  }
 }
 
 function getDatabase() {
