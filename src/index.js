@@ -386,14 +386,6 @@ function parseDuration(duration) {
 }
 
 /* =========================
-   LOADING TEXT
-========================= */
-
-function thinkingMessage() {
-  return "LOADING";
-}
-
-/* =========================
    FORCE-END TEXT
 ========================= */
 
@@ -1044,14 +1036,14 @@ async function createGiveaway(
     return;
   }
 
+  /*
+    Discord's real interaction loading state.
+    We intentionally DO NOT edit the reply
+    with "LOADING" or another custom message.
+  */
   await interaction.deferReply({
     flags:
       MessageFlags.Ephemeral
-  });
-
-  await interaction.editReply({
-    content:
-      thinkingMessage()
   });
 
   const endsAt =
@@ -1171,14 +1163,13 @@ async function createDrop(
     return;
   }
 
+  /*
+    Discord's real interaction loading state.
+    No custom "LOADING" message is sent.
+  */
   await interaction.deferReply({
     flags:
       MessageFlags.Ephemeral
-  });
-
-  await interaction.editReply({
-    content:
-      thinkingMessage()
   });
 
   const drop = {
