@@ -106,18 +106,12 @@ const PERMISSION_NAMES = {
    CHECK CHANNEL PERMISSIONS
 ========================= */
 
-function getMissingChannelPermissions(
-  channel
-) {
-  if (
-    !channel ||
-    !channel.guild
-  ) {
+function getMissingChannelPermissions(channel) {
+  if (!channel || !channel.guild) {
     return [];
   }
 
-  const me =
-    channel.guild.members.me;
+  const me = channel.guild.members.me;
 
   if (!me) {
     return [
@@ -195,7 +189,8 @@ async function checkCommandPermissions(
       permissionErrorMessage(
         missing
       ),
-    flags: MessageFlags.Ephemeral
+    flags:
+      MessageFlags.Ephemeral
   });
 
   return false;
@@ -237,7 +232,8 @@ async function checkButtonPermissions(
         permissionErrorMessage(
           missing
         ),
-      flags: MessageFlags.Ephemeral
+      flags:
+        MessageFlags.Ephemeral
     });
   }
 
@@ -251,18 +247,24 @@ async function checkButtonPermissions(
 const commands = [
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Check if the bot is online."),
+    .setDescription(
+      "Check if the bot is online."
+    ),
 
   new SlashCommandBuilder()
     .setName("giveaway")
-    .setDescription("Start a giveaway.")
+    .setDescription(
+      "Start a giveaway."
+    )
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild.toString()
     )
     .addStringOption(option =>
       option
         .setName("prize")
-        .setDescription("The giveaway prize.")
+        .setDescription(
+          "The giveaway prize."
+        )
         .setRequired(true)
     )
     .addStringOption(option =>
@@ -276,27 +278,35 @@ const commands = [
     .addIntegerOption(option =>
       option
         .setName("winners")
-        .setDescription("Number of winners.")
+        .setDescription(
+          "Number of winners."
+        )
         .setRequired(true)
         .setMinValue(1)
     ),
 
   new SlashCommandBuilder()
     .setName("drop")
-    .setDescription("Start a first-click drop.")
+    .setDescription(
+      "Start a first-click drop."
+    )
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild.toString()
     )
     .addStringOption(option =>
       option
         .setName("prize")
-        .setDescription("The drop prize.")
+        .setDescription(
+          "The drop prize."
+        )
         .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("force-end")
-    .setDescription("Force-end an active giveaway or drop.")
+    .setDescription(
+      "Force-end an active giveaway or drop."
+    )
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageGuild.toString()
     )
@@ -376,11 +386,11 @@ function parseDuration(duration) {
 }
 
 /* =========================
-   THINKING TEXT
+   LOADING TEXT
 ========================= */
 
 function thinkingMessage() {
-  return "-# *itamaros bot is thinking...*";
+  return "LOADING";
 }
 
 /* =========================
@@ -483,7 +493,9 @@ function createDropButton(
         .setCustomId(
           `drop_${messageId}`
         )
-        .setLabel("🎉 CLAIM")
+        .setLabel(
+          "🎉 CLAIM"
+        )
         .setStyle(
           ButtonStyle.Success
         )
@@ -619,10 +631,6 @@ async function finishGiveaway(
         )
       : "";
 
-  /* =========================
-     NO ENTRIES
-  ========================= */
-
   if (
     entries.length === 0
   ) {
@@ -649,7 +657,8 @@ async function finishGiveaway(
           },
           {
             name: "Winner(s)",
-            value: "No winner"
+            value:
+              "No winner"
           }
         );
 
@@ -686,10 +695,6 @@ async function finishGiveaway(
 
     return;
   }
-
-  /* =========================
-     WINNERS
-  ========================= */
 
   const winnerText =
     winners.length
@@ -743,17 +748,9 @@ async function finishGiveaway(
     ]
   });
 
-  /* =========================
-     PUBLIC END MESSAGE
-  ========================= */
-
   await message.channel.send(
     `🎉 GIVEAWAY ENDED!\n\nPrize: **${giveaway.prize}**\nWinner(s): ${winnerText}${forceText}`
   );
-
-  /* =========================
-     WINNER DMS
-  ========================= */
 
   for (
     const winnerId of
@@ -775,10 +772,6 @@ async function finishGiveaway(
       );
     }
   }
-
-  /* =========================
-     HOST DM
-  ========================= */
 
   try {
     const host =
