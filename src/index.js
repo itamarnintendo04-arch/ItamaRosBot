@@ -11,7 +11,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
-  StringSelectMenuBuilder
+  StringSelectMenuBuilder,
+  MessageFlags
 } = require("discord.js");
 
 const {
@@ -149,7 +150,6 @@ async function registerCommands() {
     }
   );
 
-  // Clear old global commands.
   await rest.put(
     Routes.applicationCommands(CLIENT_ID),
     {
@@ -199,6 +199,22 @@ function parseDuration(duration) {
 }
 
 /* =========================
+   THINKING MESSAGE
+========================= */
+
+function thinkingMessage() {
+  return "-# *itamaros bot is thinking...*";
+}
+
+/* =========================
+   FORCE-END TEXT
+========================= */
+
+function forceEndedText(userId) {
+  return `-# *(force ended by <@${userId}>)*`;
+}
+
+/* =========================
    GIVEAWAY BUTTON
 ========================= */
 
@@ -210,7 +226,7 @@ function createGiveawayButton(
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`giveaway_${messageId}`)
-      .setLabel(`${count} ENTRIES`)
+      .setLabel(`🎉 ${count} ENTERIES`)
       .setStyle(ButtonStyle.Success)
       .setDisabled(disabled)
   );
@@ -223,7 +239,9 @@ function createGiveawayButton(
 function createLeaveButton(messageId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`giveaway_leave_${messageId}`)
+      .setCustomId(
+        `giveaway_leave_${messageId}`
+      )
       .setLabel("LEAVE")
       .setStyle(ButtonStyle.Danger)
   );
@@ -350,15 +368,76 @@ async function finishGiveaway(
     return;
   }
 
+  const forceText = forcedBy
+    ? forceEndedText(forcedBy.id)
+    : "";
+
+  /* =========================
+     NO ENTERIES
+  ========================= */
+
+  if (entries.length === 0) {
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle("🎉 GIVEAWAY ENDED!")
+      .addFields(
+        {
+          name: "Prize",
+          value: giveaway.prize
+        },
+        {
+          name: "Hosted by",
+          value: `<@${giveaway.hostId}>`
+        },
+        {
+          name: "ENTERIES",
+          value: "0"
+        }
+      );
+
+    await message.edit({
+      embeds: [embed],
+      components: [
+        createGiveawayButton(
+          giveaway.messageId,
+          0,
+          true
+        )
+      ]
+    });
+
+    await message.channel.send(
+      `THE GIVEAWAY ENDED WITH NO ENTERIES.${forceText}`
+    );
+
+    try {
+      const host =
+        await client.users.fetch(
+          giveaway.hostId
+        );
+
+      await host.send(
+        `Your giveaway for **${giveaway.prize}** has ended with no ENTERIES.${forceText}`
+      );
+    } catch (error) {
+      console.error(
+        "Could not DM giveaway host:",
+        error
+      );
+    }
+
+    return;
+  }
+
+  /* =========================
+     WINNERS
+  ========================= */
+
   const winnerText = winners.length
     ? winners
         .map(id => `<@${id}>`)
         .join(", ")
     : "No winners";
-
-  const forceText = forcedBy
-    ? ` (FORCE ENDED BY <@${forcedBy.id}>)`
-    : "";
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -373,13 +452,12 @@ async function finishGiveaway(
         value: `<@${giveaway.hostId}>`
       },
       {
-        name: "Participants",
+        name: "ENTERIES",
         value: String(entries.length)
       },
       {
         name: "Winner(s)",
-        value:
-          `${winnerText}${forceText}`
+        value: winnerText
       }
     );
 
@@ -394,15 +472,9 @@ async function finishGiveaway(
     ]
   });
 
-  if (winners.length) {
-    await message.channel.send(
-      `🎉 Congratulations ${winnerText}! You won **${giveaway.prize}**!${forceText}`
-    );
-  } else {
-    await message.channel.send(
-      `🎉 The giveaway for **${giveaway.prize}** ended with no winners.${forceText}`
-    );
-  }
+  await message.channel.send(
+    `🎉 Congratulations ${winnerText}! You won **${giveaway.prize}**!${forceText}`
+  );
 
   for (const winnerId of winners) {
     try {
@@ -486,12 +558,12 @@ async function claimDrop(
   }
 
   const forceText = forcedBy
-    ? ` (FORCE ENDED BY <@${forcedBy.id}>)`
+    ? forceEndedText(forcedBy.id)
     : "";
 
   const winnerText = winnerId
     ? `<@${winnerId}>`
-    : `No winner${forceText}`;
+    : `No winner`;
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -640,7 +712,7 @@ async function createGiveaway(
     await interaction.reply({
       content:
         "Invalid duration. Use formats like `1M`, `5M`, `1H`, `6H`, `1D`, `7D`, `1W`, or `3W`.",
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
 
     return;
@@ -648,7 +720,7 @@ async function createGiveaway(
 
   await interaction.reply({
     content:
-      "ITAMAROS BOT IS THINKING..."
+      thinkingMessage()
   });
 
   const message =
@@ -698,7 +770,7 @@ async function createGiveaway(
         value: String(winners)
       },
       {
-        name: "Participants",
+        name: "ENTERIES",
         value: "0"
       }
     );
@@ -733,7 +805,7 @@ async function createDrop(
 
   await interaction.reply({
     content:
-      "ITAMAROS BOT IS THINKING..."
+      thinkingMessage()
   });
 
   const message =
@@ -814,7 +886,7 @@ async function showForceEndMenu(
     await interaction.reply({
       content:
         "There are no active giveaways or drops.",
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
 
     return;
@@ -841,7 +913,7 @@ async function showForceEndMenu(
             ? `${
                 item.entries
                   ?.length || 0
-              } ENTRIES`
+              } ENTERIES`
             : "First click wins"
       };
     });
@@ -864,7 +936,7 @@ async function showForceEndMenu(
     content:
       "Select the giveaway or drop you want to force-end:",
     components: [row],
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }
 
@@ -996,25 +1068,15 @@ client.on(
           interaction.commandName ===
           "ping"
         ) {
-          const start =
-            Date.now();
+          const latency =
+            Date.now() -
+            interaction.createdTimestamp;
 
           await interaction.reply({
             content:
-              "ITAMAROS BOT IS THINKING..."
-          });
-
-          const ms =
-            Date.now() - start;
-
-          const websocketPing =
-            client.ws.ping;
-
-          await interaction.editReply({
-            content:
               `PONG! 🏓\n${Math.max(
-                ms,
-                websocketPing
+                0,
+                latency
               )} MS`
           });
 
@@ -1033,7 +1095,7 @@ client.on(
             await interaction.reply({
               content:
                 "You need Manage Server permission to use this command.",
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
 
             return;
@@ -1058,7 +1120,7 @@ client.on(
             await interaction.reply({
               content:
                 "You need Manage Server permission to use this command.",
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
 
             return;
@@ -1083,7 +1145,7 @@ client.on(
             await interaction.reply({
               content:
                 "You need Manage Server permission to use this command.",
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
 
             return;
@@ -1110,9 +1172,8 @@ client.on(
           "giveaway_leave_"
         )
       ) {
-        // Acknowledge immediately.
         await interaction.deferReply({
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
 
         const messageId =
@@ -1204,17 +1265,15 @@ client.on(
               : null;
 
           if (embed) {
-            const participantField =
+            const entryField =
               embed.data.fields?.find(
                 field =>
                   field.name ===
-                  "Participants"
+                  "ENTERIES"
               );
 
-            if (
-              participantField
-            ) {
-              participantField.value =
+            if (entryField) {
+              entryField.value =
                 String(
                   updated.entries
                     .length
@@ -1233,22 +1292,12 @@ client.on(
                 )
               ]
             });
-          } else {
-            await message.edit({
-              components: [
-                createGiveawayButton(
-                  updated.messageId,
-                  updated.entries
-                    .length
-                )
-              ]
-            });
           }
         }
 
         await interaction.editReply({
           content:
-            `You entered the giveaway!\n\nYou are now one of ${updated.entries.length} ENTRIES.`,
+            `You entered the giveaway!\n\nYou are now one of ${updated.entries.length} ENTERIES.`,
           components: [
             createLeaveButton(
               messageId
@@ -1270,7 +1319,7 @@ client.on(
         )
       ) {
         await interaction.deferReply({
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
 
         const messageId =
@@ -1354,17 +1403,15 @@ client.on(
               : null;
 
           if (embed) {
-            const participantField =
+            const entryField =
               embed.data.fields?.find(
                 field =>
                   field.name ===
-                  "Participants"
+                  "ENTERIES"
               );
 
-            if (
-              participantField
-            ) {
-              participantField.value =
+            if (entryField) {
+              entryField.value =
                 String(
                   updated.entries
                     .length
@@ -1383,22 +1430,12 @@ client.on(
                 )
               ]
             });
-          } else {
-            await message.edit({
-              components: [
-                createGiveawayButton(
-                  updated.messageId,
-                  updated.entries
-                    .length
-                )
-              ]
-            });
           }
         }
 
         await interaction.editReply({
           content:
-            `You left the giveaway.\n\nThere are now ${updated.entries.length} ENTRIES.`
+            `You left the giveaway.\n\nThere are now ${updated.entries.length} ENTERIES.`
         });
 
         return;
@@ -1414,9 +1451,8 @@ client.on(
           "drop_"
         )
       ) {
-        // Acknowledge immediately.
         await interaction.deferReply({
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
 
         const messageId =
@@ -1506,7 +1542,7 @@ client.on(
           await interaction.reply({
             content:
               "An error occurred while processing the request.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
           });
         }
       } catch {}
