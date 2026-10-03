@@ -159,18 +159,26 @@ function getMissingChannelPermissions(channel) {
 ========================= */
 
 function permissionErrorMessage(
-  missingPermissions
+  missingPermissions,
+  channel
 ) {
+  const channelName =
+    channel?.name
+      ? `#${channel.name}`
+      : "#unknown-channel";
+
   return [
     "❌ **I don't have the required permissions in this channel.**",
     "",
-    "**Required permissions:**",
+    `📍 **Channel:** ${channelName}`,
+    "",
+    "**Missing permissions:**",
     ...missingPermissions.map(
       permission =>
         `- ${permission}`
     ),
     "",
-    "**Please give these permissions to the bot's role.**"
+    `Please give these permissions to the bot's role in **${channelName}**.`
   ].join("\n");
 }
 
