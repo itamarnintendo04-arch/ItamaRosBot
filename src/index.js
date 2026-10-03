@@ -150,6 +150,7 @@ async function registerCommands() {
     }
   );
 
+  // Clear old global commands.
   await rest.put(
     Routes.applicationCommands(CLIENT_ID),
     {
@@ -199,7 +200,7 @@ function parseDuration(duration) {
 }
 
 /* =========================
-   THINKING MESSAGE
+   THINKING TEXT
 ========================= */
 
 function thinkingMessage() {
@@ -226,24 +227,31 @@ function createGiveawayButton(
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`giveaway_${messageId}`)
-      .setLabel(`🎉 ${count} ENTERIES`)
+      .setLabel(`🎉 ${count} ENTRIES`)
       .setStyle(ButtonStyle.Success)
       .setDisabled(disabled)
   );
 }
 
 /* =========================
-   GIVEAWAY LEAVE BUTTON
+   GIVEAWAY USER BUTTONS
 ========================= */
 
-function createLeaveButton(messageId) {
+function createGiveawayUserButtons(messageId) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(
         `giveaway_leave_${messageId}`
       )
-      .setLabel("LEAVE")
-      .setStyle(ButtonStyle.Danger)
+      .setLabel("❌ LEAVE")
+      .setStyle(ButtonStyle.Danger),
+
+    new ButtonBuilder()
+      .setCustomId(
+        `giveaway_keep_${messageId}`
+      )
+      .setLabel("✅ KEEP ME IN")
+      .setStyle(ButtonStyle.Success)
   );
 }
 
@@ -373,7 +381,7 @@ async function finishGiveaway(
     : "";
 
   /* =========================
-     NO ENTERIES
+     NO ENTRIES
   ========================= */
 
   if (entries.length === 0) {
@@ -390,7 +398,7 @@ async function finishGiveaway(
           value: `<@${giveaway.hostId}>`
         },
         {
-          name: "ENTERIES",
+          name: "ENTRIES",
           value: "0"
         }
       );
@@ -407,7 +415,7 @@ async function finishGiveaway(
     });
 
     await message.channel.send(
-      `THE GIVEAWAY ENDED WITH NO ENTERIES.${forceText}`
+      `THE GIVEAWAY ENDED WITH NO ENTRIES.${forceText}`
     );
 
     try {
@@ -417,7 +425,7 @@ async function finishGiveaway(
         );
 
       await host.send(
-        `Your giveaway for **${giveaway.prize}** has ended with no ENTERIES.${forceText}`
+        `Your giveaway for **${giveaway.prize}** has ended with no ENTRIES.${forceText}`
       );
     } catch (error) {
       console.error(
@@ -452,7 +460,7 @@ async function finishGiveaway(
         value: `<@${giveaway.hostId}>`
       },
       {
-        name: "ENTERIES",
+        name: "ENTRIES",
         value: String(entries.length)
       },
       {
@@ -563,7 +571,7 @@ async function claimDrop(
 
   const winnerText = winnerId
     ? `<@${winnerId}>`
-    : `No winner`;
+    : "No winner";
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
@@ -597,7 +605,7 @@ async function claimDrop(
 
   if (winnerId) {
     await message.channel.send(
-      `🎉 Congratulations <@${winnerId}>! You won **${drop.prize || "the drop"}**!`
+      `🎉 Congratulations <@${winnerId}>! You won **${drop.prize || "the drop"}**!${forceText}`
     );
 
     try {
@@ -607,7 +615,7 @@ async function claimDrop(
         );
 
       await winner.send(
-        `🎉 Congratulations! You won **${drop.prize || "the drop"}**!`
+        `🎉 Congratulations! You won **${drop.prize || "the drop"}**!${forceText}`
       );
     } catch (error) {
       console.error(
@@ -629,7 +637,7 @@ async function claimDrop(
 
     await host.send(
       winnerId
-        ? `Your drop for **${drop.prize || "the drop"}** has been claimed by <@${winnerId}>.`
+        ? `Your drop for **${drop.prize || "the drop"}** has been claimed by <@${winnerId}>.${forceText}`
         : `Your drop has been force-ended.${forceText}`
     );
   } catch (error) {
@@ -718,20 +726,30 @@ async function createGiveaway(
     return;
   }
 
-  await interaction.reply({
+  /*
+    Immediately acknowledge the command.
+    This gives Discord its native private
+    loading state to the command user.
+  */
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  /*
+    Show the private thinking message
+    while the giveaway is being prepared.
+  */
+  await interaction.editReply({
     content:
       thinkingMessage()
   });
-
-  const message =
-    await interaction.fetchReply();
 
   const endsAt =
     Date.now() + duration;
 
   const giveaway = {
     type: "giveaway",
-    messageId: message.id,
+    messageId: null,
     channelId:
       interaction.channelId,
     guildId:
@@ -749,41 +767,85 @@ async function createGiveaway(
   const collection =
     getCollection();
 
-  await collection.insertOne(
-    giveaway
-  );
-
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("🎉 GIVEAWAY!")
-    .addFields(
-      {
-        name: "Prize",
-        value: prize
-      },
-      {
-        name: "Hosted by",
-        value: `<@${interaction.user.id}>`
-      },
-      {
-        name: "Winners",
-        value: String(winners)
-      },
-      {
-        name: "ENTERIES",
-        value: "0"
-      }
+  /*
+    Insert first so MongoDB has the
+    giveaway data ready.
+  */
+  const insertResult =
+    await collection.insertOne(
+      giveaway
     );
 
+  giveaway._id =
+    insertResult.insertedId;
+
+  /*
+    Create the public giveaway message.
+  */
+  const message =
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle("🎉 GIVEAWAY!")
+          .addFields(
+            {
+              name: "Prize",
+              value: prize
+            },
+            {
+              name: "Hosted by",
+              value: `<@${interaction.user.id}>`
+            },
+            {
+              name: "Winners",
+              value: String(winners)
+            },
+            {
+              name: "ENTRIES",
+              value: "0"
+            }
+          )
+      ]
+    });
+
+  giveaway.messageId =
+    message.id;
+
+  /*
+    Save the real Discord message ID.
+  */
+  await collection.updateOne(
+    {
+      _id: giveaway._id
+    },
+    {
+      $set: {
+        messageId: message.id
+      }
+    }
+  );
+
+  /*
+    Add the real button now that
+    we know the message ID.
+  */
   await message.edit({
-    content: "",
-    embeds: [embed],
     components: [
       createGiveawayButton(
         message.id,
         0
       )
     ]
+  });
+
+  /*
+    Remove the private thinking message
+    after the public giveaway is ready.
+  */
+  await interaction.editReply({
+    content:
+      "Giveaway created successfully."
   });
 
   scheduleGiveaway(
@@ -803,17 +865,22 @@ async function createDrop(
       "prize"
     );
 
-  await interaction.reply({
+  /*
+    Immediately acknowledge the command
+    privately.
+  */
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  await interaction.editReply({
     content:
       thinkingMessage()
   });
 
-  const message =
-    await interaction.fetchReply();
-
   const drop = {
     type: "drop",
-    messageId: message.id,
+    messageId: null,
     channelId:
       interaction.channelId,
     guildId:
@@ -828,34 +895,63 @@ async function createDrop(
   const collection =
     getCollection();
 
-  await collection.insertOne(
-    drop
-  );
-
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("🎉 DROP!")
-    .addFields(
-      {
-        name: "Prize",
-        value:
-          prize ||
-          "No prize specified"
-      },
-      {
-        name: "Hosted by",
-        value: `<@${interaction.user.id}>`
-      }
+  const insertResult =
+    await collection.insertOne(
+      drop
     );
 
+  drop._id =
+    insertResult.insertedId;
+
+  /*
+    Create public drop.
+  */
+  const message =
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x57f287)
+          .setTitle("🎉 DROP!")
+          .addFields(
+            {
+              name: "Prize",
+              value:
+                prize ||
+                "No prize specified"
+            },
+            {
+              name: "Hosted by",
+              value: `<@${interaction.user.id}>`
+            }
+          )
+      ]
+    });
+
+  drop.messageId =
+    message.id;
+
+  await collection.updateOne(
+    {
+      _id: drop._id
+    },
+    {
+      $set: {
+        messageId: message.id
+      }
+    }
+  );
+
   await message.edit({
-    content: "",
-    embeds: [embed],
     components: [
       createDropButton(
         message.id
       )
     ]
+  });
+
+  await interaction.editReply({
+    content:
+      "Drop created successfully."
   });
 }
 
@@ -913,7 +1009,7 @@ async function showForceEndMenu(
             ? `${
                 item.entries
                   ?.length || 0
-              } ENTERIES`
+              } ENTRIES`
             : "First click wins"
       };
     });
@@ -1170,6 +1266,9 @@ client.on(
         ) &&
         !interaction.customId.startsWith(
           "giveaway_leave_"
+        ) &&
+        !interaction.customId.startsWith(
+          "giveaway_keep_"
         )
       ) {
         await interaction.deferReply({
@@ -1211,7 +1310,7 @@ client.on(
             content:
               "You are already entered in this giveaway.",
             components: [
-              createLeaveButton(
+              createGiveawayUserButtons(
                 messageId
               )
             ]
@@ -1269,7 +1368,7 @@ client.on(
               embed.data.fields?.find(
                 field =>
                   field.name ===
-                  "ENTERIES"
+                  "ENTRIES"
               );
 
             if (entryField) {
@@ -1297,9 +1396,9 @@ client.on(
 
         await interaction.editReply({
           content:
-            `You entered the giveaway!\n\nYou are now one of ${updated.entries.length} ENTERIES.`,
+            `You entered the giveaway!\n\nYou are now one of ${updated.entries.length} ENTRIES.`,
           components: [
-            createLeaveButton(
+            createGiveawayUserButtons(
               messageId
             )
           ]
@@ -1407,7 +1506,7 @@ client.on(
               embed.data.fields?.find(
                 field =>
                   field.name ===
-                  "ENTERIES"
+                  "ENTRIES"
               );
 
             if (entryField) {
@@ -1435,7 +1534,73 @@ client.on(
 
         await interaction.editReply({
           content:
-            `You left the giveaway.\n\nThere are now ${updated.entries.length} ENTERIES.`
+            `You left the giveaway.\n\nThere are now ${updated.entries.length} ENTRIES.`
+        });
+
+        return;
+      }
+
+      /* =====================
+         KEEP ME IN
+      ===================== */
+
+      if (
+        interaction.isButton() &&
+        interaction.customId.startsWith(
+          "giveaway_keep_"
+        )
+      ) {
+        await interaction.deferReply({
+          flags: MessageFlags.Ephemeral
+        });
+
+        const messageId =
+          interaction.customId.replace(
+            "giveaway_keep_",
+            ""
+          );
+
+        const collection =
+          getCollection();
+
+        const giveaway =
+          await collection.findOne({
+            messageId,
+            type: "giveaway",
+            finished: false
+          });
+
+        if (!giveaway) {
+          await interaction.editReply({
+            content:
+              "This giveaway has already ended."
+          });
+
+          return;
+        }
+
+        const isEntered =
+          giveaway.entries?.includes(
+            interaction.user.id
+          );
+
+        if (!isEntered) {
+          await interaction.editReply({
+            content:
+              "You are not currently entered in this giveaway."
+          });
+
+          return;
+        }
+
+        await interaction.editReply({
+          content:
+            "✅ You're staying in the giveaway!",
+          components: [
+            createGiveawayUserButtons(
+              messageId
+            )
+          ]
         });
 
         return;
