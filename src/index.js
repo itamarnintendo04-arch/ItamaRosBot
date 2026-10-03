@@ -150,7 +150,6 @@ async function registerCommands() {
     }
   );
 
-  // Clear old global commands.
   await rest.put(
     Routes.applicationCommands(CLIENT_ID),
     {
@@ -251,6 +250,21 @@ function createGiveawayUserButtons(messageId) {
         `giveaway_keep_${messageId}`
       )
       .setLabel("✅ KEEP ME IN")
+      .setStyle(ButtonStyle.Success)
+  );
+}
+
+/* =========================
+   ENTER AGAIN BUTTON
+========================= */
+
+function createEnterAgainButton(messageId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(
+        `giveaway_enter_again_${messageId}`
+      )
+      .setLabel("🎉 ENTER AGAIN")
       .setStyle(ButtonStyle.Success)
   );
 }
@@ -380,10 +394,6 @@ async function finishGiveaway(
     ? forceEndedText(forcedBy.id)
     : "";
 
-  /* =========================
-     NO ENTRIES
-  ========================= */
-
   if (entries.length === 0) {
     const embed = new EmbedBuilder()
       .setColor(0x57f287)
@@ -436,10 +446,6 @@ async function finishGiveaway(
 
     return;
   }
-
-  /* =========================
-     WINNERS
-  ========================= */
 
   const winnerText = winners.length
     ? winners
@@ -726,19 +732,10 @@ async function createGiveaway(
     return;
   }
 
-  /*
-    Immediately acknowledge the command.
-    This gives Discord its native private
-    loading state to the command user.
-  */
   await interaction.deferReply({
     flags: MessageFlags.Ephemeral
   });
 
-  /*
-    Show the private thinking message
-    while the giveaway is being prepared.
-  */
   await interaction.editReply({
     content:
       thinkingMessage()
@@ -767,10 +764,6 @@ async function createGiveaway(
   const collection =
     getCollection();
 
-  /*
-    Insert first so MongoDB has the
-    giveaway data ready.
-  */
   const insertResult =
     await collection.insertOne(
       giveaway
@@ -779,9 +772,6 @@ async function createGiveaway(
   giveaway._id =
     insertResult.insertedId;
 
-  /*
-    Create the public giveaway message.
-  */
   const message =
     await interaction.channel.send({
       embeds: [
@@ -812,9 +802,6 @@ async function createGiveaway(
   giveaway.messageId =
     message.id;
 
-  /*
-    Save the real Discord message ID.
-  */
   await collection.updateOne(
     {
       _id: giveaway._id
@@ -826,10 +813,6 @@ async function createGiveaway(
     }
   );
 
-  /*
-    Add the real button now that
-    we know the message ID.
-  */
   await message.edit({
     components: [
       createGiveawayButton(
@@ -839,14 +822,7 @@ async function createGiveaway(
     ]
   });
 
-  /*
-    Remove the private thinking message
-    after the public giveaway is ready.
-  */
-  await interaction.editReply({
-    content:
-      "Giveaway created successfully."
-  });
+  await interaction.deleteReply();
 
   scheduleGiveaway(
     giveaway
@@ -865,10 +841,6 @@ async function createDrop(
       "prize"
     );
 
-  /*
-    Immediately acknowledge the command
-    privately.
-  */
   await interaction.deferReply({
     flags: MessageFlags.Ephemeral
   });
@@ -903,9 +875,6 @@ async function createDrop(
   drop._id =
     insertResult.insertedId;
 
-  /*
-    Create public drop.
-  */
   const message =
     await interaction.channel.send({
       embeds: [
@@ -949,10 +918,7 @@ async function createDrop(
     ]
   });
 
-  await interaction.editReply({
-    content:
-      "Drop created successfully."
-  });
+  await interaction.deleteReply();
 }
 
 /* =========================
@@ -1269,6 +1235,9 @@ client.on(
         ) &&
         !interaction.customId.startsWith(
           "giveaway_keep_"
+        ) &&
+        !interaction.customId.startsWith(
+          "giveaway_enter_again_"
         )
       ) {
         await interaction.deferReply({
@@ -1408,6 +1377,70 @@ client.on(
       }
 
       /* =====================
+         KEEP ME IN
+      ===================== */
+
+      if (
+        interaction.isButton() &&
+        interaction.customId.startsWith(
+          "giveaway_keep_"
+        )
+      ) {
+        const messageId =
+          interaction.customId.replace(
+            "giveaway_keep_",
+            ""
+          );
+
+        const collection =
+          getCollection();
+
+        const giveaway =
+          await collection.findOne({
+            messageId,
+            type: "giveaway",
+            finished: false
+          });
+
+        if (!giveaway) {
+          await interaction.update({
+            content:
+              "This giveaway has already ended.",
+            components: []
+          });
+
+          return;
+        }
+
+        const isEntered =
+          giveaway.entries?.includes(
+            interaction.user.id
+          );
+
+        if (!isEntered) {
+          await interaction.update({
+            content:
+              "You are not currently entered in this giveaway.",
+            components: []
+          });
+
+          return;
+        }
+
+        // Completely remove the ephemeral message.
+        await interaction.update({
+          content: "",
+          components: []
+        });
+
+        try {
+          await interaction.deleteReply();
+        } catch {}
+        
+        return;
+      }
+
+      /* =====================
          GIVEAWAY LEAVE
       ===================== */
 
@@ -1417,9 +1450,7 @@ client.on(
           "giveaway_leave_"
         )
       ) {
-        await interaction.deferReply({
-          flags: MessageFlags.Ephemeral
-        });
+        await interaction.deferUpdate();
 
         const messageId =
           interaction.customId.replace(
@@ -1440,7 +1471,8 @@ client.on(
         if (!giveaway) {
           await interaction.editReply({
             content:
-              "This giveaway has already ended."
+              "This giveaway has already ended.",
+            components: []
           });
 
           return;
@@ -1453,7 +1485,12 @@ client.on(
         ) {
           await interaction.editReply({
             content:
-              "You are not currently entered in this giveaway."
+              "You are not currently entered in this giveaway.",
+            components: [
+              createEnterAgainButton(
+                messageId
+              )
+            ]
           });
 
           return;
@@ -1482,7 +1519,8 @@ client.on(
         if (!updated) {
           await interaction.editReply({
             content:
-              "You could not leave the giveaway."
+              "You could not leave the giveaway.",
+            components: []
           });
 
           return;
@@ -1534,20 +1572,25 @@ client.on(
 
         await interaction.editReply({
           content:
-            `You left the giveaway.\n\nThere are now ${updated.entries.length} ENTRIES.`
+            "You left the giveaway.",
+          components: [
+            createEnterAgainButton(
+              messageId
+            )
+          ]
         });
 
         return;
       }
 
       /* =====================
-         KEEP ME IN
+         ENTER AGAIN
       ===================== */
 
       if (
         interaction.isButton() &&
         interaction.customId.startsWith(
-          "giveaway_keep_"
+          "giveaway_enter_again_"
         )
       ) {
         await interaction.deferReply({
@@ -1556,7 +1599,7 @@ client.on(
 
         const messageId =
           interaction.customId.replace(
-            "giveaway_keep_",
+            "giveaway_enter_again_",
             ""
           );
 
@@ -1573,29 +1616,109 @@ client.on(
         if (!giveaway) {
           await interaction.editReply({
             content:
-              "This giveaway has already ended."
+              "This giveaway has already ended.",
+            components: []
           });
 
           return;
         }
 
-        const isEntered =
+        if (
           giveaway.entries?.includes(
             interaction.user.id
-          );
-
-        if (!isEntered) {
+          )
+        ) {
           await interaction.editReply({
             content:
-              "You are not currently entered in this giveaway."
+              "You are already entered in this giveaway.",
+            components: [
+              createGiveawayUserButtons(
+                messageId
+              )
+            ]
           });
 
           return;
+        }
+
+        const updated =
+          await collection.findOneAndUpdate(
+            {
+              messageId,
+              type: "giveaway",
+              finished: false,
+              entries: {
+                $ne:
+                  interaction.user.id
+              }
+            },
+            {
+              $addToSet: {
+                entries:
+                  interaction.user.id
+              }
+            },
+            {
+              returnDocument: "after"
+            }
+          );
+
+        if (!updated) {
+          await interaction.editReply({
+            content:
+              "You could not enter the giveaway."
+          });
+
+          return;
+        }
+
+        const message =
+          await getOriginalMessage(
+            updated
+          );
+
+        if (message) {
+          const embed =
+            message.embeds[0]
+              ? EmbedBuilder.from(
+                  message.embeds[0]
+                )
+              : null;
+
+          if (embed) {
+            const entryField =
+              embed.data.fields?.find(
+                field =>
+                  field.name ===
+                  "ENTRIES"
+              );
+
+            if (entryField) {
+              entryField.value =
+                String(
+                  updated.entries
+                    .length
+                );
+            }
+
+            await message.edit({
+              embeds: [
+                embed
+              ],
+              components: [
+                createGiveawayButton(
+                  updated.messageId,
+                  updated.entries
+                    .length
+                )
+              ]
+            });
+          }
         }
 
         await interaction.editReply({
           content:
-            "✅ You're staying in the giveaway!",
+            `You entered the giveaway again!\n\nYou are now one of ${updated.entries.length} ENTRIES.`,
           components: [
             createGiveawayUserButtons(
               messageId
