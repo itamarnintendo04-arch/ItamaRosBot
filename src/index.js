@@ -159,9 +159,9 @@ function getMissingChannelPermissions(channel) {
 ========================= */
 
 function permissionErrorMessage(
-  missingPermissions,
+  missing,
   channel
-) {
+)
   const channelName =
     channel?.name
       ? `#${channel.name}`
