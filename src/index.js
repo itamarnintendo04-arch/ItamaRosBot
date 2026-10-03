@@ -115,21 +115,51 @@ const PERMISSION_NAMES = {
    CHECK CHANNEL PERMISSIONS
 ========================= */
 
-function getMissingChannelPermissions(channel) {
+async function getMissingChannelPermissions(channel) {
   if (!channel || !channel.guild) {
     return [];
   }
 
-  const me = channel.guild.members.me;
+  let me = channel.guild.members.me;
 
   if (!me) {
-    return [
-      "View Channel",
-      "Send Messages",
-      "Embed Links",
-      "Read Message History"
-    ];
+    try {
+      me = await channel.guild.members.fetchMe();
+    } catch (error) {
+      console.error(
+        "Could not fetch the bot member for permission check:",
+        error
+      );
+
+      return [];
+    }
   }
+
+  const permissions =
+    channel.permissionsFor(me);
+
+  if (!permissions) {
+    return [];
+  }
+
+  if (
+    permissions.has(
+      PermissionFlagsBits.Administrator
+    )
+  ) {
+    return [];
+  }
+
+  return REQUIRED_CHANNEL_PERMISSIONS
+    .filter(
+      permission =>
+        !permissions.has(permission)
+    )
+    .map(
+      permission =>
+        PERMISSION_NAMES[permission]
+    );
+}
 
   const permissions =
     channel.permissionsFor(me);
