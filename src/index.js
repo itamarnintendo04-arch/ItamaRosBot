@@ -214,8 +214,14 @@ async function checkCommandPermissions(
   const channel =
     interaction.channel;
 
+async function checkCommandPermissions(
+  interaction
+) {
+  const channel =
+    interaction.channel;
+
   const missing =
-    getMissingChannelPermissions(
+    await getMissingChannelPermissions(
       channel
     );
 
